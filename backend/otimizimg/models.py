@@ -1,24 +1,10 @@
 from django.db import models
-from django.core.exceptions import ValidationError
 from PIL import Image as PILImage
 import os
 
-def validate_image(value):
-    try:
-        image = PILImage.open(value)
-        image.verify()  # Verifica se a imagem é válida
-        if image.format.upper() not in ['JPEG', 'PNG', 'WEBP']:
-            raise ValidationError('Formato não suportado. Use JPEG, PNG ou WebP.')
-    except Exception:
-        raise ValidationError('Arquivo inválido. Por favor, envie uma imagem válida.')
+from otimizimg.validators import validate_image
 
 class UploadedImage(models.Model):
-    SUPPORTED_FORMATS = [
-        ('JPEG', 'JPEG'),
-        ('PNG', 'PNG'),
-        ('WEBP', 'WebP'),
-    ]
-
     original_image = models.ImageField(
         upload_to='originals/',
         validators=[validate_image],
@@ -43,24 +29,6 @@ class UploadedImage(models.Model):
         editable=False,
         help_text='Altura da imagem em pixels'
     )
-    optimized_image = models.ImageField(
-        upload_to='optimized/',
-        null=True,
-        blank=True,
-        help_text='Versão otimizada da imagem'
-    )
-    optimized_format = models.CharField(
-        max_length=10,
-        choices=SUPPORTED_FORMATS,
-        null=True,
-        blank=True,
-        help_text='Formato da imagem otimizada'
-    )
-    optimized_size = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text='Tamanho otimizado em bytes'
-    )
     uploaded_at = models.DateTimeField(
         auto_now_add=True,
         help_text='Data e hora do upload'
@@ -72,49 +40,117 @@ class UploadedImage(models.Model):
 
     class Meta:
         ordering = ['-uploaded_at']
-        verbose_name = 'Imagem'
-        verbose_name_plural = 'Imagens'
+        verbose_name = 'Imagem Original'
+        verbose_name_plural = 'Imagens Originais'
 
     def __str__(self):
-        return f'Imagem {self.id} - {self.get_dimensions()}'
+        return f'Imagem Original {self.id} - {self.get_dimensions()}'
 
     def get_dimensions(self):
         return f'{self.width}x{self.height}'
 
     def save(self, *args, **kwargs):
-        # Se é um novo objeto ou a imagem original mudou
         if not self.pk or 'original_image' in self.__dict__:
             with PILImage.open(self.original_image) as img:
-                # Salva informações da imagem original
                 self.original_format = img.format
                 self.width = img.width
                 self.height = img.height
                 self.original_size = self.original_image.size
 
-        # Limpa otimização anterior se a imagem original mudou
-        if 'original_image' in self.__dict__:
-            if self.optimized_image:
-                try:
-                    old_path = self.optimized_image.path
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-                except Exception:
-                    pass
-            self.optimized_image = None
-            self.optimized_format = None
-            self.optimized_size = None
-
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        # Remove os arquivos ao deletar o objeto
         try:
             if self.original_image:
                 if os.path.exists(self.original_image.path):
                     os.remove(self.original_image.path)
+        except Exception:
+            pass
+        super().delete(*args, **kwargs)
+
+
+class OptimizedImage(models.Model):
+    SUPPORTED_FORMATS = [
+        ('JPEG', 'JPEG'),
+        ('PNG', 'PNG'),
+        ('WEBP', 'WebP'),
+    ]
+
+    optimized_image = models.ImageField(
+        upload_to='optimized/',
+        validators=[validate_image],
+        help_text='Versão otimizada da imagem'
+    )
+    optimized_format = models.CharField(
+        max_length=10,
+        choices=SUPPORTED_FORMATS,
+        help_text='Formato da imagem otimizada'
+    )
+    optimized_size = models.PositiveIntegerField(
+        help_text='Tamanho otimizado em bytes'
+    )
+    width = models.IntegerField(
+        default=0,
+        editable=False,
+        help_text='Largura da imagem otimizada em pixels'
+    )
+    height = models.IntegerField(
+        default=0,
+        editable=False,
+        help_text='Altura da imagem otimizada em pixels'
+    )
+
+    class Meta:
+        verbose_name = 'Imagem Otimizada'
+        verbose_name_plural = 'Imagens Otimizadas'
+
+    def __str__(self):
+        return f'Imagem Otimizada {self.id} - {self.get_dimensions()}'
+
+    def get_dimensions(self):
+        return f'{self.width}x{self.height}'
+
+    def save(self, *args, **kwargs):
+        if not self.pk or 'optimized_image' in self.__dict__:
+            with PILImage.open(self.optimized_image) as img:
+                self.optimized_format = img.format
+                self.width = img.width
+                self.height = img.height
+                self.optimized_size = self.optimized_image.size
+
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        try:
             if self.optimized_image:
                 if os.path.exists(self.optimized_image.path):
                     os.remove(self.optimized_image.path)
         except Exception:
             pass
         super().delete(*args, **kwargs)
+
+
+class ImageRelation(models.Model):
+    original_image = models.OneToOneField(
+        UploadedImage,
+        on_delete=models.CASCADE,
+        related_name='optimized_relation',
+        help_text='Imagem original'
+    )
+    optimized_image = models.OneToOneField(
+        OptimizedImage,
+        on_delete=models.CASCADE,
+        related_name='original_relation',
+        help_text='Imagem otimizada'
+    )
+    related_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text='Data e hora da relação'
+    )
+
+    class Meta:
+        verbose_name = 'Relação de Imagem'
+        verbose_name_plural = 'Relações de Imagem'
+
+    def __str__(self):
+        return f'Relação {self.id} - Original: {self.original_image.id}, Otimizada: {self.optimized_image.id}'

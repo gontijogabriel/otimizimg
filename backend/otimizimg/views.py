@@ -1,11 +1,12 @@
-import os
-from django.conf import settings
-from rest_framework import viewsets, status
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from PIL import Image as PILImage
-from otimizimg.models import UploadedImage
-from otimizimg.serializers import UploadedImageSerializer
+from rest_framework import status
+from django.core.files.uploadedfile import InMemoryUploadedFile
+import io
+from .models import UploadedImage, OptimizedImage, ImageRelation
+from .serializers import UploadedImageSerializer, OptimizedImageSerializer, ImageRelationSerializer, OptimizeImageSerializer
+from .utils import optimize_image
 
 class UploadedImageViewSet(viewsets.ModelViewSet):
     queryset = UploadedImage.objects.all()
@@ -13,75 +14,48 @@ class UploadedImageViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def optimize(self, request, pk=None):
-        try:
-            image = self.get_object()
-            format = request.data.get('format', 'JPEG')
-            
-            # Validação do formato
-            if format not in dict(UploadedImage.SUPPORTED_FORMATS):
-                return Response(
-                    {'error': 'Formato não suportado'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Validação da qualidade
-            quality = request.data.get('quality', 85)
-            try:
-                quality = int(quality)
-                if not (1 <= quality <= 100):
-                    raise ValueError()
-            except (TypeError, ValueError):
-                return Response(
-                    {'error': 'Qualidade deve ser um número entre 1 e 100'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Cria diretório se não existir
-            output_dir = os.path.join(settings.MEDIA_ROOT, 'optimized')
-            os.makedirs(output_dir, exist_ok=True)
-
-            # Define caminho do arquivo otimizado
-            output_filename = f'{image.id}_{format.lower()}'
-            if format.upper() == 'JPEG':
-                output_filename += '.jpg'
-            else:
-                output_filename += f'.{format.lower()}'
-            
-            output_path = os.path.join(output_dir, output_filename)
-            relative_path = os.path.join('optimized', output_filename)
+        uploaded_image = self.get_object()  # Obtém a imagem original
+        serializer = OptimizeImageSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            optimized_format = serializer.validated_data['optimized_format']
+            quality = serializer.validated_data['quality']
 
             # Otimiza a imagem
-            with PILImage.open(image.original_image.path) as img:
-                # Converte para RGB se necessário
-                if format.upper() == 'JPEG' and img.mode in ('RGBA', 'P'):
-                    img = img.convert('RGB')
-                
-                # Salva a imagem otimizada
-                img.save(
-                    output_path,
-                    format=format,
-                    quality=quality,
-                    optimize=True
-                )
+            optimized_io, optimized_size = optimize_image(uploaded_image.original_image.path, optimized_format, quality)
 
-            # Atualiza o modelo
-            if image.optimized_image:
-                try:
-                    old_path = image.optimized_image.path
-                    if os.path.exists(old_path) and old_path != output_path:
-                        os.remove(old_path)
-                except Exception:
-                    pass
-
-            image.optimized_image = relative_path
-            image.optimized_format = format
-            image.optimized_size = os.path.getsize(output_path)
-            image.save()
-
-            return Response(UploadedImageSerializer(image).data)
-
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            # Converte BytesIO para InMemoryUploadedFile
+            optimized_file = InMemoryUploadedFile(
+                optimized_io, None, uploaded_image.original_image.name, 
+                "image/" + optimized_format.lower(), optimized_size, None
             )
+
+            # Cria a imagem otimizada
+            optimized_image = OptimizedImage.objects.create(
+                optimized_image=optimized_file,
+                optimized_format=optimized_format,
+                optimized_size=optimized_size,
+                width=uploaded_image.width,
+                height=uploaded_image.height
+            )
+
+            # Cria a relação entre a imagem original e a otimizada
+            ImageRelation.objects.create(
+                original_image=uploaded_image,
+                optimized_image=optimized_image
+            )
+
+            return Response({
+                'status': 'imagem otimizada com sucesso',
+                'optimized_image': OptimizedImageSerializer(optimized_image).data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class OptimizedImageViewSet(viewsets.ModelViewSet):
+    queryset = OptimizedImage.objects.all()
+    serializer_class = OptimizedImageSerializer
+
+class ImageRelationViewSet(viewsets.ModelViewSet):
+    queryset = ImageRelation.objects.all()
+    serializer_class = ImageRelationSerializer
