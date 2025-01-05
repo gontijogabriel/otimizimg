@@ -1,24 +1,22 @@
 from rest_framework import serializers
-from .models import UploadedImage, OptimizedImage, ImageRelation
+from otimizimg.models import ImageUpload, ImageConverter
 
-class UploadedImageSerializer(serializers.ModelSerializer):
+        
+class ImageConverterSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UploadedImage
+        model = ImageConverter
         fields = '__all__'
-
-class OptimizedImageSerializer(serializers.ModelSerializer):
+        
+        
+class ImageUploadSerializer(serializers.ModelSerializer):
     class Meta:
-        model = OptimizedImage
+        model = ImageUpload
         fields = '__all__'
-
-class ImageRelationSerializer(serializers.ModelSerializer):
-    original_image = UploadedImageSerializer()
-    optimized_image = OptimizedImageSerializer()
-
+        
+        
+class ImageSerializer(serializers.ModelSerializer):
+    conversions = ImageConverterSerializer(many=True, read_only=True)
+    
     class Meta:
-        model = ImageRelation
+        model = ImageUpload
         fields = '__all__'
-
-class OptimizeImageSerializer(serializers.Serializer):
-    optimized_format = serializers.ChoiceField(choices=OptimizedImage.SUPPORTED_FORMATS, default='JPEG')
-    quality = serializers.IntegerField(min_value=1, max_value=100, default=85)

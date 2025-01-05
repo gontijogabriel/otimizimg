@@ -1,12 +1,10 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
-from otimizimg.views import UploadedImageViewSet, OptimizedImageViewSet, ImageRelationViewSet
+from otimizimg.views import ImageView
 
 
 router = DefaultRouter()
-router.register(r'uploaded-images', UploadedImageViewSet)
-router.register(r'optimized-images', OptimizedImageViewSet)
-router.register(r'image-relations', ImageRelationViewSet)
+router.register(r'image', ImageView)
 
 urlpatterns = [
     path('', include(router.urls)),
